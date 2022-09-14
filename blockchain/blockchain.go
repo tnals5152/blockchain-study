@@ -12,6 +12,7 @@ type Block struct { //block header
 	Hash          []byte //해시값
 	Timestamp     int64  //시간
 	Data          []byte //데이터
+	Nonce         int    //임시값
 }
 
 type Blockchain struct { //블록들의 연결
@@ -30,8 +31,13 @@ func (b *Block) SetHash() {
 
 //새 블록 생성
 func NewBlock(data string, prevBlockHash []byte) *Block {
-	block := &Block{prevBlockHash, []byte{}, time.Now().Unix(), []byte(data)}
-	block.SetHash()
+	block := &Block{prevBlockHash, []byte{}, time.Now().Unix(), []byte(data), 0}
+
+	pow := NewProofOfWork(block)
+	nonce, hash := pow.Run()
+
+	block.Hash = hash
+	block.Nonce = nonce
 
 	return block
 }
