@@ -1,4 +1,4 @@
-package block
+package blockchain
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ type Block struct { //block header
 }
 
 type Blockchain struct { //블록들의 연결
-	blocks []*Block
+	Blocks []*Block
 }
 
 func (b *Block) SetHash() {
@@ -43,6 +43,6 @@ func NewBlockchain() *Blockchain { //genesis block : 블록체인의 가장 첫 
 }
 
 func (bc *Blockchain) AddBlock(data string) {
-	block := NewBlock(data, bc.blocks[len(bc.blocks)-1].Hash)
-	bc.blocks = append(bc.blocks, block)
+	block := NewBlock(data, bc.Blocks[len(bc.Blocks)-1].Hash)
+	bc.Blocks = append(bc.Blocks, block)
 }
