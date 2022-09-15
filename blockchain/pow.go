@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"math/big"
 )
 
@@ -23,15 +24,15 @@ func NewProofOfWork(b *Block) *ProofOfWork {
 	return &ProofOfWork{b, target}
 }
 
-func (pow *ProofOfWork) Run() (int, []byte) {
+func (pow *ProofOfWork) Run() (int64, []byte) {
 	var hashInt big.Int
 	var hash [32]byte
-	maxNumber := ^uint(0) //비트 반전을 통해 제일 큰 값을 반환
-	nonce := 0
+	var nonce int64
+	// maxNumber := ^uint(0) //비트 반전을 통해 제일 큰 값을 반환
 
 	fmt.Printf("블록 마이닝 시작  %s\n", pow.block.Data)
 
-	for uint(nonce) < maxNumber {
+	for nonce < math.MaxInt64 {
 		data := pow.prepareData(nonce)
 		hash = sha256.Sum256(data)
 
@@ -49,7 +50,7 @@ func (pow *ProofOfWork) Run() (int, []byte) {
 	return nonce, hash[:]
 }
 
-func (pow *ProofOfWork) prepareData(nonce int) []byte { //블록의 값들을 활용해서 병합하는 역할
+func (pow *ProofOfWork) prepareData(nonce int64) []byte { //블록의 값들을 활용해서 병합하는 역할
 	return bytes.Join([][]byte{
 		pow.block.PrevBlockHash,
 		pow.block.Data,
@@ -58,6 +59,17 @@ func (pow *ProofOfWork) prepareData(nonce int) []byte { //블록의 값들을 �
 		IntToHex(int64(nonce)),
 	},
 		[]byte{})
+}
+
+// 블록이 작업 증명을 통해 나온 것인지 확인하는 함수
+func (pow *ProofOfWork) Validate(block *Block) bool {
+	var hashInt big.Int
+	data := pow.prepareData(block.Nonce)
+	hash := sha256.Sum256(data)
+
+	hashInt.SetBytes(hash[:])
+
+	return hashInt.Cmp(pow.target) == -1
 }
 
 func IntToHex(num int64) []byte {
