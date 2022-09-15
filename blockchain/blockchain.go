@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/gob"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"strconv"
@@ -22,8 +23,9 @@ type Block struct { //block header
 	PrevBlockHash []byte //이전 블록의 해시값
 	Hash          []byte //해시값
 	Timestamp     int64  //시간
-	Data          []byte //데이터
-	Nonce         int64  //임시값
+	// Data          []byte //데이터
+	Transactions []*Transaction
+	Nonce        int64 //임시값
 }
 
 type Blockchain struct { //블록들의 연결
@@ -36,10 +38,11 @@ type blockchainIterator struct { //블록체인 내부 순회를 위한 반복�
 	hash []byte
 }
 
+// 안 씀
 func (b *Block) SetHash() {
 	header := bytes.Join([][]byte{
 		b.PrevBlockHash,
-		b.Data,
+		b.HashTransaction(),
 		[]byte(strconv.FormatInt(b.Timestamp, 16)), //정수를 16진수로 변환
 	}, []byte{})
 	hash := sha256.Sum256(header)
@@ -60,8 +63,21 @@ func (b *Block) Serialize() []byte {
 	return result.Bytes()
 }
 
-func (bc *Blockchain) AddBlock(data string) {
-	block := NewBlock(data, bc.last)
+// 트랜잭션의 ID를 묶어서 해싱하는 함수
+func (b *Block) HashTransaction() []byte {
+	var txHashes [][]byte
+
+	for _, tx := range b.Transactions {
+		txHashes = append(txHashes, tx.ID)
+	}
+
+	txHash := sha256.Sum256(bytes.Join(txHashes, []byte{}))
+
+	return txHash[:]
+}
+
+func (bc *Blockchain) AddBlock(transactions []*Transaction) {
+	block := NewBlock(transactions, bc.last)
 
 	db := bc.db
 
@@ -99,13 +115,104 @@ func (bc *Blockchain) List() {
 
 		fmt.Printf("PrevBlockHash: %x\n", block.PrevBlockHash)
 		fmt.Printf("Hash: %x\n", block.Hash)
-		fmt.Printf("Data: %s\n", block.Data)
+		// fmt.Printf("Data: %s\n", block.Data)
 
 		pow := NewProofOfWork(block)
 		fmt.Println("pow: ", pow.Validate(block))
 
 		fmt.Println("--------------------------------------------------")
 	}
+}
+
+func (bc *Blockchain) Iterator() *blockchainIterator {
+	return &blockchainIterator{bc.db, bc.last}
+}
+
+func (bc *Blockchain) FindUnspentTransactions(address string) []Transaction {
+	var unspentTXs []Transaction
+	spentTXOs := make(map[string][]int)
+	bci := bc.Iterator()
+
+	for bci.HasNext() {
+		block := bci.Next()
+		for _, tx := range block.Transactions {
+			txID := hex.EncodeToString(tx.ID)
+
+		Outputs:
+			for outIdx, out := range tx.Vout {
+				// 출력 사용 여부 검사
+				// TXOutput에서 이미 소비된 트랜잭션에 대해선 처리하지 않음
+				if spentTXOs[txID] != nil {
+					for _, spentOut := range spentTXOs[txID] {
+						if spentOut == outIdx {
+							continue Outputs
+						}
+					}
+				}
+
+				// address의 공개키로 출력이 되었다는 것 -> address에 자금을 보냈다는 것
+				// 그 외의 트랜잭션은 아직 소비되지 않은 트랜잭션
+				// if out.ScriptPubKey == address
+				if out.CanBeUnlockedWith(address) {
+					unspentTXs = append(unspentTXs, *tx)
+				}
+			}
+
+			// 입력이 없는 코인베이스 트랜잭션 제외
+			if !tx.IsCoinbase() {
+				// TXInput 을 조사 후 이미 소비된 출력 집합 얻음
+				for _, in := range tx.Vin {
+					// 서명을 address가 했다는 것은 address가 지불을 위해 해당 트랜잭션 출력을 사용했다는 뜻
+					// if in.ScriptSig == address
+					if in.CanUnlockOutputWith(address) {
+						inTxID := hex.EncodeToString(in.Txid)
+						spentTXOs[inTxID] = append(spentTXOs[inTxID], in.Vout)
+					}
+				}
+			}
+		}
+	}
+	return unspentTXs
+}
+
+// 트랜잭선 리스트에서 출력들만 반환하는 함수
+func (bc *Blockchain) FindUTXO(address string) []TXOutput {
+	var UTXOs []TXOutput
+	unspentTransactions := bc.FindUnspentTransactions(address)
+	for _, tx := range unspentTransactions {
+		for _, out := range tx.Vout {
+			if out.CanBeUnlockedWith(address) {
+				UTXOs = append(UTXOs, out)
+			}
+		}
+	}
+	return UTXOs
+}
+
+// 미사용 출력을 찾아 충분한 잔고를 가지고 있는지 확인하는 함수
+// 모든 미사용 트랜잭션을 순회하면서 값을 누적
+func (bc *Blockchain) FindSpendableOutputs(address string, amount int) (int, map[string][]int) {
+	unspentOutputs := make(map[string][]int)
+	unspentTXs := bc.FindUnspentTransactions(address)
+	accumulated := 0
+
+Work:
+	for _, tx := range unspentTXs {
+		txID := hex.EncodeToString(tx.ID)
+
+		for outIdx, out := range tx.Vout {
+			if out.CanBeUnlockedWith(address) && accumulated < amount {
+				accumulated += out.Value
+				unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
+			}
+
+			if accumulated >= amount {
+				break Work
+			}
+		}
+	}
+
+	return accumulated, unspentOutputs
 }
 
 func (bIter *blockchainIterator) Next() (block *Block) { //반복해서 블록들을 읽어오기 위한 함수
@@ -142,8 +249,8 @@ func DeserializeBlock(d []byte) *Block {
 }
 
 //새 블록 생성
-func NewBlock(data string, prevBlockHash []byte) *Block {
-	block := &Block{prevBlockHash, []byte{}, time.Now().Unix(), []byte(data), 0}
+func NewBlock(transactions []*Transaction, prevBlockHash []byte) *Block {
+	block := &Block{prevBlockHash, []byte{}, time.Now().Unix(), transactions, 0}
 
 	pow := NewProofOfWork(block)
 	nonce, hash := pow.Run()
@@ -155,7 +262,8 @@ func NewBlock(data string, prevBlockHash []byte) *Block {
 }
 
 // 블록체인을 새로 생성한다
-func NewBlockchain() *Blockchain { //genesis block : 블록체인의 가장 첫 블록
+// CreateBlockchain
+func NewBlockchain(address string) *Blockchain { //genesis block : 블록체인의 가장 첫 블록
 
 	var last []byte
 	db, err := bolt.Open(dbFile, 0600, nil) //boltdb 파일 오픈
@@ -181,7 +289,7 @@ func NewBlockchain() *Blockchain { //genesis block : 블록체인의 가장 첫 
 		}
 
 		//genesis block생성 = 초기 블록
-		genesis := NewBlock("Genesis Block", []byte{})
+		genesis := NewBlock([]*Transaction{NewCoinbaseTx("", address)}, []byte{})
 
 		//genesis블록 db에 저장
 		err = bucket.Put(genesis.Hash, genesis.Serialize())
@@ -202,6 +310,7 @@ func NewBlockchain() *Blockchain { //genesis block : 블록체인의 가장 첫 
 
 // 블록체인을 완전히 새로 생성하지 않고 기존에 있던 블록체인을 얻어올 경우에만 사용
 // ex) 블록을 생성할 때와 출력할 때 사용
+// NewBlockchain
 func GetBlockchain() *Blockchain {
 
 	var last []byte

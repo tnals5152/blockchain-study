@@ -30,7 +30,7 @@ func (pow *ProofOfWork) Run() (int64, []byte) {
 	var nonce int64
 	// maxNumber := ^uint(0) //비트 반전을 통해 제일 큰 값을 반환
 
-	fmt.Printf("블록 마이닝 시작  %s\n", pow.block.Data)
+	fmt.Printf("블록 마이닝 시작  %s\n", pow.block.Hash)
 
 	for nonce < math.MaxInt64 {
 		data := pow.prepareData(nonce)
@@ -53,7 +53,7 @@ func (pow *ProofOfWork) Run() (int64, []byte) {
 func (pow *ProofOfWork) prepareData(nonce int64) []byte { //블록의 값들을 활용해서 병합하는 역할
 	return bytes.Join([][]byte{
 		pow.block.PrevBlockHash,
-		pow.block.Data,
+		pow.block.HashTransaction(),
 		IntToHex(pow.block.Timestamp),
 		IntToHex(int64(targetBits)),
 		IntToHex(int64(nonce)),

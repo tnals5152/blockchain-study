@@ -2,6 +2,7 @@ package blockchain
 
 import (
 	"flag"
+	"fmt"
 	"os"
 )
 
@@ -31,6 +32,15 @@ func (cli *CLI) list() {
 	defer blockchain.db.Close()
 
 	blockchain.List()
+}
+
+func (cli *CLI) send(from, to string, amount int) {
+	bc := NewBlockchain(from)
+	defer bc.db.Close()
+
+	tx := NewUTXOTransaction(from, to, amount, bc)
+	bc.MineBlock([]*Transaction{tx})
+	fmt.Println("Success!")
 }
 
 func (cli *CLI) Run() {
@@ -66,4 +76,18 @@ func (cli *CLI) Run() {
 	if listCmd.Parsed() {
 		cli.list()
 	}
+}
+
+// 계좌 잔고(계좌 주소로 잠긴 모든 미사용 트랜잭션 출력 값의 합)
+func (cli *CLI) getBalance(address string) {
+	bc := NewBlockchain(address)
+	defer bc.db.Close()
+
+	balance := 0
+	UTXOs := bc.FindUTXO(address)
+
+	for _, out := range UTXOs {
+		balance += out.Value
+	}
+	fmt.Printf("Balance of '%s': %d\n", address, balance)
 }
